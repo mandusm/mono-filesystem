@@ -1,0 +1,69 @@
+name: mono-router-rootfs-build
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install Build Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git autoconf bison flex texinfo help2man gawk libtool-bin libncurses5-dev unzip libbpf-dev libmount-dev fdisk curl gcc g++ gperf make python3-dev automake libtool wget bzip2 xz-utils patch libstdc++6 rsync cpio bc
+      - name: Checkout Source
+        uses: actions/checkout@v4
+      - name: Set xtool Path
+        run: mkdir /opt/x-tools
+      - name: Retrieve X-Tools Cache
+        id: cache-xtools
+        uses: actions/cache/restore@v4
+        with:
+          path: /opt/x-tools
+          key: ${{ runner.os }}-xtools-${{ hashFiles('configs/crosstool-ng-1.26.0_defconfig') }}
+      - name: Fetch X-Tools
+        if: steps.cache-xtools.outputs.cache-hit != 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: crosstool-ng/crosstool-ng
+          path: crosstool-ng
+          ref: crosstool-ng-1.26.0
+      - name: Build X-Tools
+        if: steps.cache-xtools.outputs.cache-hit != 'true'
+        run: |
+          cd $GITHUB_WORKSPACE/crosstool-ng
+          ./bootstrap
+          ./configure --enable-local
+          make -j`nproc`
+          DEFCONFIG=../configs/crosstool-ng-1.26.0_defconfig ./ct-ng defconfig && \
+          ./ct-ng build -j`nproc`
+      - name: Update X-Tools Cache
+        if: steps.cache-xtools.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /opt/x-tools
+          key: ${{ runner.os }}-xtools-${{ hashFiles('configs/crosstool-ng-1.26.0_defconfig') }}
+      - name: Fetch BuildRoot
+        uses: actions/checkout@v4
+        with:
+          repository: buildroot/buildroot
+          path: buildroot
+          ref: 2024.05
+      - name: Init BuildRoot Config
+        env:
+          BR2_EXTERNAL: ${{ github.workspace }}
+        run: |
+          cd $GITHUB_WORKSPACE/buildroot
+          make ls1046a-rdb_defconfig
+      - name: Build RootFS Image
+        env:
+          BR2_EXTERNAL: ${{ github.workspace }}
+        run: |
+          cd $GITHUB_WORKSPACE/buildroot
+          make -j`nproc`
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: $GITHUB_WORKSPACE/buildroot/output/images/*
+          
